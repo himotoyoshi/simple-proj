@@ -1,5 +1,8 @@
-A Ruby wrapper of PROJ 7 for map projection conversion 
+A Ruby wrapper of PROJ for map projection conversion 
 ======
+
+This is a ruby extension library for map projection conversion using PROJ.
+Note that this library is not a verbatim wrapper library for PROJ.
 
 Installation
 ------------
@@ -23,7 +26,7 @@ Usage
 
 ### Constructor
 
-    PROJ.new(PROJ_STRING)   ### transform defined by proj-string
+    PROJ.new(PROJ_STRING)  ### transform defined by proj-string
     PROJ.new(CRS1, CRS2)   ### transform from CRS1 to CRS2
     PROJ.new(CRS2)         ### CRS1 is assumed latlong
 
