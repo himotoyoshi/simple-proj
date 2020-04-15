@@ -11,5 +11,8 @@ typedef struct {
 extern PJ* PJ_DEFAULT_LONGLAT;
 
 extern VALUE rb_cProj;
+extern VALUE rb_cCrs;
+
+VALUE rb_crs_new(PJ *);
 
 #endif

@@ -3,7 +3,9 @@ Gem::Specification::new do |s|
   version = "1.0.0"
 
   files = Dir.glob("**/*") - [ 
-                               Dir.glob("proj7-*.gem"), 
+                               Dir.glob("simple-proj-*.gem"), 
+                               Dir.glob("doc/**/*"), 
+                               Dir.glob("examples/**/*"), 
                              ].flatten
 
   s.platform    = Gem::Platform::RUBY
@@ -13,6 +15,7 @@ Gem::Specification::new do |s|
     Extension library for PROJ 7
   HERE
   s.version     = version
+  s.licenses    = ['MIT']
   s.author      = "Hiroki Motoyoshi"
   s.email       = ""
   s.homepage    = 'https://github.com/himotoyoshi/simple-proj'
