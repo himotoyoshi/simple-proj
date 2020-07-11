@@ -158,3 +158,8 @@ class PROJ
   end
 
 end
+
+begin
+  require "simple-proj-carray"
+rescue LoadError
+end
