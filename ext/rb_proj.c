@@ -321,6 +321,7 @@ rb_proj_factors (VALUE self, VALUE vlon, VALUE vlat)
 Transforms coordinates forwardly from (lat1, lon1, z1) to (x1, y2, z2).
 The order of coordinates arguments should be longitude, latitude, and height.
 The input longitude and latitude should be in units 'degrees'.
+If the returned coordinates are angles, they are converted in units `degrees`.
 
 @overload forward(lon1, lat1, z1 = nil)
   @param lon1 [Numeric] longitude in degrees.
@@ -368,6 +369,81 @@ rb_proj_forward (int argc, VALUE *argv, VALUE self)
     rb_raise(rb_eRuntimeError, "%s", proj_errno_string(errno));
   }
 
+  if (  proj_angular_output(proj->ref, PJ_FWD) == 1 ) {    
+    if ( NIL_P(vz) ) {
+      return rb_assoc_new(rb_float_new(proj_todeg(data_out.lpz.lam)), 
+                          rb_float_new(proj_todeg(data_out.lpz.phi)));
+    } else {
+      return rb_ary_new3(3, rb_float_new(proj_todeg(data_out.lpz.lam)), 
+                            rb_float_new(proj_todeg(data_out.lpz.phi)),
+                            rb_float_new(data_out.lpz.z));
+    }
+  }
+  else {
+    if ( NIL_P(vz) ) {
+      return rb_assoc_new(rb_float_new(data_out.xyz.x), 
+                          rb_float_new(data_out.xyz.y));    
+    } else {
+      return rb_ary_new3(3, rb_float_new(data_out.xyz.x), 
+                            rb_float_new(data_out.xyz.y),
+                            rb_float_new(data_out.xyz.z));        
+    }
+  }
+  
+}
+
+/*
+Transforms coordinates forwardly from (lat1, lon1, z1) to (x1, y2, z2).
+The order of coordinates arguments should be longitude, latitude, and height.
+The input longitude and latitude should be in units 'degrees'.
+If the returned coordinates are angles, they are treated as in units `radians`.
+
+@overload forward(lon1, lat1, z1 = nil)
+  @param lon1 [Numeric] longitude in degrees.
+  @param lat1 [Numeric] latitude in degrees.
+  @param z1 [Numeric, nil] vertical coordinate.
+
+@return x2, y2[, z2]
+
+@example
+  x2, y2 = pj.forward(lon1, lat1)
+  x2, y2, z2 = pj.forward(lon1, lat1, z1)
+
+*/
+static VALUE
+rb_proj_forward_bang (int argc, VALUE *argv, VALUE self)
+{
+  volatile VALUE vlon, vlat, vz;
+  Proj *proj;
+  PJ_COORD data_in, data_out;
+  int errno;
+
+  rb_scan_args(argc, argv, "21", (VALUE*) &vlon, (VALUE*) &vlat, (VALUE*) &vz);
+
+  Data_Get_Struct(self, Proj, proj);
+
+  if ( ! proj->is_src_latlong ) {
+    rb_raise(rb_eRuntimeError, "requires latlong src crs. use #transform_forward instead of #forward.");
+  }
+
+  if ( proj_angular_input(proj->ref, PJ_FWD) == 1 ) {
+    data_in.lpz.lam = proj_torad(NUM2DBL(vlon));
+    data_in.lpz.phi = proj_torad(NUM2DBL(vlat));
+    data_in.lpz.z   = NIL_P(vz) ? 0.0 : NUM2DBL(vz);
+  }
+  else {
+    data_in.xyz.x = NUM2DBL(vlon);
+    data_in.xyz.y = NUM2DBL(vlat);
+    data_in.xyz.z = NIL_P(vz) ? 0.0 : NUM2DBL(vz);    
+  }
+
+  data_out = proj_trans(proj->ref, PJ_FWD, data_in);
+
+  if ( data_out.xyz.x == HUGE_VAL ) {
+    errno = proj_context_errno(PJ_DEFAULT_CTX);
+    rb_raise(rb_eRuntimeError, "%s", proj_errno_string(errno));
+  }
+
   if ( NIL_P(vz) ) {
     return rb_assoc_new(rb_float_new(data_out.xyz.x), 
                         rb_float_new(data_out.xyz.y));    
@@ -376,11 +452,13 @@ rb_proj_forward (int argc, VALUE *argv, VALUE self)
                           rb_float_new(data_out.xyz.y),
                           rb_float_new(data_out.xyz.z));        
   }
+  
 }
 
 /*
 Transforms coordinates inversely from (x1, y1, z1) to (lon2, lat2, z2).
 The order of output coordinates is longitude, latitude and height.
+If the input coordinates are angles, they are treated as being in units `degrees`.
 The returned longitude and latitude are in units 'degrees'.
 
 @overload inverse(x1, y1, z1 = nil)
@@ -397,6 +475,79 @@ The returned longitude and latitude are in units 'degrees'.
 */
 static VALUE
 rb_proj_inverse (int argc, VALUE *argv, VALUE self)
+{
+  volatile VALUE vx, vy, vz;
+  Proj *proj;
+  PJ_COORD data_in, data_out;
+  int errno;
+
+  rb_scan_args(argc, argv, "21", (VALUE *)&vx, (VALUE *)&vy, (VALUE *)&vz);
+  Data_Get_Struct(self, Proj, proj);
+
+  if ( ! proj->is_src_latlong ) {
+    rb_raise(rb_eRuntimeError, "requires latlong src crs. use #transform_inverse instead of #inverse.");
+  }
+
+  if ( proj_angular_input(proj->ref, PJ_INV) == 1 ) {
+    data_in.lpz.lam = proj_torad(NUM2DBL(vx));
+    data_in.lpz.phi = proj_torad(NUM2DBL(vy));
+    data_in.lpz.z   = NIL_P(vz) ? 0.0 : NUM2DBL(vz);
+  }
+  else {
+    data_in.xyz.x = NUM2DBL(vx);
+    data_in.xyz.y = NUM2DBL(vy);
+    data_in.xyz.z = NIL_P(vz) ? 0.0 : NUM2DBL(vz);
+  }
+
+  data_out = proj_trans(proj->ref, PJ_INV, data_in);
+
+  if ( data_out.lpz.lam == HUGE_VAL ) {
+    errno = proj_errno(proj->ref);
+    rb_raise(rb_eRuntimeError, "%s", proj_errno_string(errno));
+  }
+
+  if (  proj_angular_output(proj->ref, PJ_INV) == 1 ) {    
+    if ( NIL_P(vz) ) {
+      return rb_assoc_new(rb_float_new(proj_todeg(data_out.lpz.lam)), 
+                          rb_float_new(proj_todeg(data_out.lpz.phi)));
+    } else {
+      return rb_ary_new3(3, rb_float_new(proj_todeg(data_out.lpz.lam)), 
+                            rb_float_new(proj_todeg(data_out.lpz.phi)),
+                            rb_float_new(data_out.lpz.z));
+    }
+  }
+  else {
+    if ( NIL_P(vz) ) {
+      return rb_assoc_new(rb_float_new(data_out.xyz.x), 
+                          rb_float_new(data_out.xyz.y));
+    } else {
+      return rb_ary_new3(3, rb_float_new(data_out.xyz.x), 
+                            rb_float_new(data_out.xyz.y),
+                            rb_float_new(data_out.xyz.z));
+    }    
+  }
+}
+
+/*
+Transforms coordinates inversely from (x1, y1, z1) to (lon2, lat2, z2).
+The order of output coordinates is longitude, latitude and height.
+If the input coordinates are angles, they are treated as being in units `radians`.
+The returned longitude and latitude are in units 'degrees'.
+
+@overload inverse(x1, y1, z1 = nil)
+  @param x1 [Numeric] 
+  @param y1 [Numeric]
+  @param z1 [Numeric, nil]
+
+@return lon2, lat2, [, z2]
+
+@example
+  lon2, lat2 = pj.inverse(x1, y1)
+  lon2, lat2, z2 = pj.inverse(x1, y1, z1)
+
+*/
+static VALUE
+rb_proj_inverse_bang (int argc, VALUE *argv, VALUE self)
 {
   volatile VALUE vx, vy, vz;
   Proj *proj;
@@ -798,7 +949,9 @@ Init_simple_proj ()
   rb_define_method(rb_cProj, "angular_output?", rb_proj_angular_output, 1);
   rb_define_method(rb_cProj, "normalize_for_visualization", rb_proj_normalize_for_visualization, 0);
   rb_define_method(rb_cProj, "forward", rb_proj_forward, -1);
+  rb_define_method(rb_cProj, "forward!", rb_proj_forward_bang, -1);
   rb_define_method(rb_cProj, "inverse", rb_proj_inverse, -1);
+  rb_define_method(rb_cProj, "inverse!", rb_proj_inverse_bang, -1);
   rb_define_method(rb_cProj, "transform", rb_proj_transform_forward, -1);
   rb_define_method(rb_cProj, "transform_inverse", rb_proj_transform_inverse, -1);
   rb_define_private_method(rb_cProj, "_pj_info", rb_proj_pj_info, 0);

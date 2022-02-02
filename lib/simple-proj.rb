@@ -159,6 +159,32 @@ class PROJ
 
 end
 
+### Marshalling
+
+class PROJ
+  
+  def _dump_data 
+    return to_wkt
+  end
+  
+  def _load_data (wkt)
+    initialize_copy self.class.new(wkt)
+  end
+  
+end
+
+class PROJ::CRS
+  
+  def _dump_data 
+    return to_wkt
+  end
+  
+  def _load_data (wkt)
+    initialize_copy self.class.new(wkt)
+  end
+  
+end
+
 begin
   require "simple-proj-carray"
 rescue LoadError
