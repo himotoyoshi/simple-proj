@@ -51,12 +51,19 @@ The arguments should be PROJ::CRS objects or String objects one of
  * a WKT string,
  * an object code (like “EPSG:4326”, “urn:ogc:def:crs:EPSG::4326”, 
    “urn:ogc:def:coordinateOperation:EPSG::1671”),
+ * an Object name. e.g “WGS 84”, “WGS 84 / UTM zone 31N”. 
+   In that case as uniqueness is not guaranteed, 
+   heuristics are applied to determine the appropriate best match.
  * a OGC URN combining references for compound coordinate reference 
    systems (e.g “urn:ogc:def:crs,crs:EPSG::2393,crs:EPSG::5717” or 
    custom abbreviated syntax “EPSG:2393+5717”),
  * a OGC URN combining references for concatenated operations (e.g. 
    “urn:ogc:def:coordinateOperation,coordinateOperation:EPSG::3895,
    coordinateOperation:EPSG::1618”)
+ * a PROJJSON string. 
+   The jsonschema is at https://proj.org/schemas/v0.4/projjson.schema.json (added in PROJ 6.2)
+ * a compound CRS made from two object names separated with ” + “. 
+   e.g. “WGS 84 + EGM96 height” (added in 7.1)
 
 If two arguments are given, the first is the source CRS definition and the
 second is the target CRS definition. If only one argument is given, the
@@ -257,7 +264,7 @@ rb_proj_angular_input (VALUE self, VALUE direction)
 /*
 Checks if an operation returns output in radians or not.
 
-@return [Boolean]
+@return [Boolean] 
 */
 
 static VALUE
@@ -832,28 +839,6 @@ rb_proj_get_id_code (int argc, VALUE *argv, VALUE self)
   return (string) ? rb_str_new2(string) : Qnil;
 }
 
-/*
-Gets a PROJJSON string representation of the object.
-
-This method may return nil if the object is not compatible 
-with an export to the requested type.
-
-@return [String,nil]
-*/
-static VALUE
-rb_proj_as_projjson (VALUE self)
-{
-  Proj *proj;
-  const char *json;
-
-  Data_Get_Struct(self, Proj, proj);
-  json = proj_as_projjson(PJ_DEFAULT_CTX, proj->ref, NULL);
-  if ( ! json ) {
-    return Qnil;
-  }
-  return rb_str_new2(json);
-}
-
 
 /*
 Gets a PROJ string representation of the object.
@@ -876,6 +861,57 @@ rb_proj_as_proj_string (VALUE self)
   return rb_str_new2(string);
 }
 
+#if PROJ_AT_LEAST_VERSION(6,2,0)
+
+/*
+Gets a PROJJSON string representation of the object.
+
+This method may return nil if the object is not compatible 
+with an export to the requested type.
+
+@return [String,nil]
+*/
+
+static VALUE
+rb_proj_as_projjson (int argc, VALUE *argv, VALUE self)
+{
+  Proj *proj;
+	volatile VALUE vopts;
+  const char *options[4] = {NULL, NULL, NULL, NULL};
+  const char *json = NULL;
+	int i;
+
+  Data_Get_Struct(self, Proj, proj);
+
+	if ( argc == 0 ) {
+    json = proj_as_projjson(PJ_DEFAULT_CTX, proj->ref, NULL);		
+	}
+	if ( argc > 3 ) {
+		rb_raise(rb_eRuntimeError, "too much options");
+	}
+	else {
+		for (i=0; i<argc; i++) {
+	    Check_Type(argv[i], T_STRING);			
+			options[i] = StringValuePtr(argv[i]);
+		}
+    json = proj_as_projjson(PJ_DEFAULT_CTX, proj->ref, options);				
+	}
+
+  if ( ! json ) {
+    return Qnil;
+  }
+  return rb_str_new2(json);
+}
+
+#endif
+
+
+/*
+Gets a ellipsoid parameters of CRS definition of the object.
+
+@return [Array] Returns Array containing semi_major_axis(m), semi_minor(m), boolean whether the semi-minor value was computed, inverse flattening.
+*/
+
 static VALUE
 rb_proj_ellipsoid_get_parameters (VALUE self)
 {
@@ -897,7 +933,7 @@ rb_proj_ellipsoid_get_parameters (VALUE self)
 /*
 Gets a WKT expression of CRS definition of the object.
 
-@return [String]
+@return [String] Returns String of WKT expression.
 */
 static VALUE
 rb_proj_as_wkt (int argc, VALUE *argv, VALUE self)
@@ -927,7 +963,7 @@ rb_proj_as_wkt (int argc, VALUE *argv, VALUE self)
 
 
 void
-Init_simple_proj ()
+Init_simple_proj_ext ()
 {
   id_forward = rb_intern("forward");
   id_inverse = rb_intern("inverse");
@@ -966,7 +1002,9 @@ Init_simple_proj ()
   rb_define_method(rb_mCommon, "id_auth_name", rb_proj_get_id_auth_name, -1);
   rb_define_method(rb_mCommon, "id_code", rb_proj_get_id_code, -1);
   rb_define_method(rb_mCommon, "to_proj_string", rb_proj_as_proj_string, 0);
-  rb_define_method(rb_mCommon, "to_projjson", rb_proj_as_projjson, 0);
+#if PROJ_AT_LEAST_VERSION(6,2,0)
+  rb_define_method(rb_mCommon, "to_projjson", rb_proj_as_projjson, -1);
+#endif
   rb_define_method(rb_mCommon, "ellipsoid_parameters", rb_proj_ellipsoid_get_parameters, 0);
   rb_define_method(rb_mCommon, "to_wkt", rb_proj_as_wkt, -1);
 

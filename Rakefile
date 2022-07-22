@@ -6,3 +6,6 @@ task :install do
     gem build #{GEMSPEC}; gem install #{spec.full_name}.gem
   }
 end
+
+require 'rspec/core/rake_task'
+RSpec::Core::RakeTask.new

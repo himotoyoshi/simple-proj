@@ -1,9 +1,11 @@
-require 'simple_proj.so'
+require 'simple_proj_ext'
 require 'json'
 require 'bindata'
 require 'ostruct'
 
 class PROJ
+
+  VERSION = _info["version"]
 
   # Returns PROJ info
   #

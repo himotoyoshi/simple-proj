@@ -6,7 +6,7 @@ dir_config("proj", possible_includes, possible_libs)
 
 if have_header("proj.h") and have_library("proj")
   have_carray()
-  create_makefile("simple_proj")
+  create_makefile("simple_proj_ext")
 end
 
 
