@@ -10,6 +10,8 @@ typedef struct {
 
 extern PJ* PJ_DEFAULT_LONGLAT;
 
+extern const rb_data_type_t proj_data_type;
+
 extern VALUE rb_cProj;
 extern VALUE rb_cCrs;
 

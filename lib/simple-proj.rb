@@ -27,7 +27,9 @@ class PROJ
   
   # A variant of #inverse which return the output with the axis order in (lat, lon).
   def inverse_latlon (x, y, z = nil)
-    return inverse_latlon(x, y, z)
+    result = inverse(x, y, z)
+    result[0], result[1] = result[1], result[0]
+    return result
   end
 
   # Returns a internal information of the object

@@ -1,6 +1,20 @@
 #include "ruby.h"
 #include "rb_proj.h"
 
+void free_proj(void *ap);
+
+const rb_data_type_t proj_data_type = {
+    .parent = NULL,
+    .wrap_struct_name = "Proj",
+    .function = {
+        .dmark = NULL, 
+        .dfree = free_proj,
+        .dsize = NULL,
+        .dcompact = NULL
+    },
+    .flags = RUBY_TYPED_FREE_IMMEDIATELY,
+};
+
 VALUE rb_cProj;
 VALUE rb_cCrs;
 VALUE rb_mCommon;
@@ -27,9 +41,10 @@ rb_proj_info (VALUE klass)
   return vout;
 }
 
-static void 
-free_proj (Proj *proj)
+void 
+free_proj (void *ap)
 {
+  Proj *proj = ap;
   if ( proj->ref ) {
     proj_destroy(proj->ref);
   }
@@ -40,7 +55,7 @@ static VALUE
 rb_proj_s_allocate (VALUE klass)
 {
   Proj *proj;
-  return Data_Make_Struct(klass, Proj, 0, free_proj, proj);
+  return TypedData_Make_Struct(klass, Proj, &proj_data_type, proj);
 }
 
 /*
@@ -107,53 +122,84 @@ rb_proj_initialize (int argc, VALUE *argv, VALUE self)
 
   rb_scan_args(argc, argv, "11", (VALUE *)&vdef1, (VALUE *)&vdef2);
 
-  Data_Get_Struct(self, Proj, proj);
+  TypedData_Get_Struct(self, Proj, &proj_data_type, proj);
 
   if ( NIL_P(vdef2) ) {
     if ( rb_obj_is_kind_of(vdef1, rb_cCrs) ) {
-      Data_Get_Struct(vdef1, Proj, crs);
-      vdef1 = rb_str_new2(proj_as_proj_string(PJ_DEFAULT_CTX, crs->ref, PJ_PROJ_5, NULL));
+      PJ *latlong;
+      TypedData_Get_Struct(vdef1, Proj, &proj_data_type, crs);
+      latlong = proj_create(PJ_DEFAULT_CTX, "+proj=latlong +type=crs");
+      ref = proj_create_crs_to_crs_from_pj(PJ_DEFAULT_CTX, latlong, crs->ref, NULL, NULL);
+      proj_destroy(latlong);
+      proj->ref = ref;
+      proj->is_src_latlong = 2;
     }
     else {
       Check_Type(vdef1, T_STRING);
-    }
-    ref = proj_create(PJ_DEFAULT_CTX, StringValuePtr(vdef1));      
-    if ( proj_is_crs(ref) ) {
-      proj_destroy(ref);
-      ref = proj_create_crs_to_crs(PJ_DEFAULT_CTX, "+proj=latlong +type=crs", StringValuePtr(vdef1), NULL);    
-      proj->ref = ref;
-      proj->is_src_latlong = 2;      
-    }
-    else {
-      proj->ref = ref;
-      proj->is_src_latlong = 1;      
+      ref = proj_create(PJ_DEFAULT_CTX, StringValuePtr(vdef1));
+      if ( proj_is_crs(ref) ) {
+        proj_destroy(ref);
+        ref = proj_create_crs_to_crs(PJ_DEFAULT_CTX, "+proj=latlong +type=crs", StringValuePtr(vdef1), NULL);
+        proj->ref = ref;
+        proj->is_src_latlong = 2;
+      }
+      else {
+        proj->ref = ref;
+        proj->is_src_latlong = 1;
+      }
     }
   }
   else {
-    if ( rb_obj_is_kind_of(vdef1, rb_cCrs) ) {
-      Data_Get_Struct(vdef1, Proj, crs);
-      vdef1 = rb_str_new2(proj_as_proj_string(PJ_DEFAULT_CTX, crs->ref, PJ_PROJ_5, NULL));
+    int def1_is_crs_obj = RTEST(rb_obj_is_kind_of(vdef1, rb_cCrs));
+    int def2_is_crs_obj = RTEST(rb_obj_is_kind_of(vdef2, rb_cCrs));
+
+    if ( def1_is_crs_obj || def2_is_crs_obj ) {
+      PJ *src_pj = NULL, *dst_pj = NULL;
+      int src_tmp = 0, dst_tmp = 0;
+
+      if ( def1_is_crs_obj ) {
+        TypedData_Get_Struct(vdef1, Proj, &proj_data_type, crs);
+        src_pj = crs->ref;
+      }
+      else {
+        Check_Type(vdef1, T_STRING);
+        src_pj = proj_create(PJ_DEFAULT_CTX, StringValuePtr(vdef1));
+        src_tmp = 1;
+      }
+      if ( def2_is_crs_obj ) {
+        TypedData_Get_Struct(vdef2, Proj, &proj_data_type, crs);
+        dst_pj = crs->ref;
+      }
+      else {
+        Check_Type(vdef2, T_STRING);
+        dst_pj = proj_create(PJ_DEFAULT_CTX, StringValuePtr(vdef2));
+        dst_tmp = 1;
+      }
+      ref = proj_create_crs_to_crs_from_pj(PJ_DEFAULT_CTX, src_pj, dst_pj, NULL, NULL);
+      if ( src_tmp ) proj_destroy(src_pj);
+      if ( dst_tmp ) proj_destroy(dst_pj);
     }
     else {
       Check_Type(vdef1, T_STRING);
-    }
-    if ( rb_obj_is_kind_of(vdef2, rb_cCrs) ) {
-      Data_Get_Struct(vdef2, Proj, crs);
-      vdef2 = rb_str_new2(proj_as_proj_string(PJ_DEFAULT_CTX, crs->ref, PJ_PROJ_5, NULL));
-    }
-    else {
       Check_Type(vdef2, T_STRING);
+      ref = proj_create_crs_to_crs(PJ_DEFAULT_CTX, StringValuePtr(vdef1), StringValuePtr(vdef2), NULL);
     }
-    ref = proj_create_crs_to_crs(PJ_DEFAULT_CTX, StringValuePtr(vdef1), StringValuePtr(vdef2), NULL);    
+
     proj->ref = ref;
     src = proj_get_source_crs(PJ_DEFAULT_CTX, ref);
-    type = proj_get_type(src);
-    if ( type == PJ_TYPE_GEOGRAPHIC_2D_CRS ||
-         type == PJ_TYPE_GEOGRAPHIC_3D_CRS ) {
-      proj->is_src_latlong = 2;      
+    if ( src ) {
+      type = proj_get_type(src);
+      if ( type == PJ_TYPE_GEOGRAPHIC_2D_CRS ||
+           type == PJ_TYPE_GEOGRAPHIC_3D_CRS ) {
+        proj->is_src_latlong = 2;
+      }
+      else {
+        proj->is_src_latlong = 0;
+      }
+      proj_destroy(src);
     }
     else {
-      proj->is_src_latlong = 0;      
+      proj->is_src_latlong = 0;
     }
   }
   
@@ -179,7 +225,8 @@ rb_proj_normalize_for_visualization (VALUE self)
   PJ *ref, *orig;
   int errno;
 
-  Data_Get_Struct(self, Proj, proj);
+  TypedData_Get_Struct(self, Proj, &proj_data_type, proj);
+
   orig = proj->ref;
 
   ref = proj_normalize_for_visualization(PJ_DEFAULT_CTX, orig);
@@ -206,7 +253,8 @@ rb_proj_source_crs (VALUE self)
   Proj *proj;
   PJ *crs;
 
-  Data_Get_Struct(self, Proj, proj);
+  TypedData_Get_Struct(self, Proj, &proj_data_type, proj);
+
   crs = proj_get_source_crs(PJ_DEFAULT_CTX, proj->ref);
 
   if ( ! crs ) {
@@ -227,7 +275,8 @@ rb_proj_target_crs (VALUE self)
   Proj *proj;
   PJ *crs;
 
-  Data_Get_Struct(self, Proj, proj);
+  TypedData_Get_Struct(self, Proj, &proj_data_type, proj);
+  
   crs = proj_get_target_crs(PJ_DEFAULT_CTX, proj->ref);
 
   if ( ! crs ) {
@@ -248,7 +297,7 @@ rb_proj_angular_input (VALUE self, VALUE direction)
 {
   Proj *proj;
 
-  Data_Get_Struct(self, Proj, proj);
+  TypedData_Get_Struct(self, Proj, &proj_data_type, proj);
   
   if ( rb_to_id(direction) == id_forward ) {
     return proj_angular_input(proj->ref, PJ_FWD) == 1 ? Qtrue : Qfalse;
@@ -272,7 +321,7 @@ rb_proj_angular_output (VALUE self, VALUE direction)
 {
   Proj *proj;
 
-  Data_Get_Struct(self, Proj, proj);
+  TypedData_Get_Struct(self, Proj, &proj_data_type, proj);
   
   if ( rb_to_id(direction) == id_forward ) {
     return proj_angular_output(proj->ref, PJ_FWD) == 1 ? Qtrue : Qfalse;
@@ -292,7 +341,8 @@ rb_proj_pj_info (VALUE self)
   Proj *proj;
   PJ_PROJ_INFO info;
 
-  Data_Get_Struct(self, Proj, proj);
+  TypedData_Get_Struct(self, Proj, &proj_data_type, proj);
+
   info = proj_pj_info(proj->ref);
 
   vout = rb_hash_new();
@@ -313,7 +363,7 @@ rb_proj_factors (VALUE self, VALUE vlon, VALUE vlat)
   PJ_COORD pos;
   PJ_FACTORS factors;
   
-  Data_Get_Struct(self, Proj, proj);
+  TypedData_Get_Struct(self, Proj, &proj_data_type, proj);
 
   pos.lp.lam = proj_torad(NUM2DBL(vlon));
   pos.lp.phi = proj_torad(NUM2DBL(vlat));
@@ -352,7 +402,7 @@ rb_proj_forward (int argc, VALUE *argv, VALUE self)
 
   rb_scan_args(argc, argv, "21", (VALUE*) &vlon, (VALUE*) &vlat, (VALUE*) &vz);
 
-  Data_Get_Struct(self, Proj, proj);
+  TypedData_Get_Struct(self, Proj, &proj_data_type, proj);
 
   if ( ! proj->is_src_latlong ) {
     rb_raise(rb_eRuntimeError, "requires latlong src crs. use #transform_forward instead of #forward.");
@@ -427,7 +477,7 @@ rb_proj_forward_bang (int argc, VALUE *argv, VALUE self)
 
   rb_scan_args(argc, argv, "21", (VALUE*) &vlon, (VALUE*) &vlat, (VALUE*) &vz);
 
-  Data_Get_Struct(self, Proj, proj);
+  TypedData_Get_Struct(self, Proj, &proj_data_type, proj);
 
   if ( ! proj->is_src_latlong ) {
     rb_raise(rb_eRuntimeError, "requires latlong src crs. use #transform_forward instead of #forward.");
@@ -489,7 +539,8 @@ rb_proj_inverse (int argc, VALUE *argv, VALUE self)
   int errno;
 
   rb_scan_args(argc, argv, "21", (VALUE *)&vx, (VALUE *)&vy, (VALUE *)&vz);
-  Data_Get_Struct(self, Proj, proj);
+
+  TypedData_Get_Struct(self, Proj, &proj_data_type, proj);
 
   if ( ! proj->is_src_latlong ) {
     rb_raise(rb_eRuntimeError, "requires latlong src crs. use #transform_inverse instead of #inverse.");
@@ -562,7 +613,8 @@ rb_proj_inverse_bang (int argc, VALUE *argv, VALUE self)
   int errno;
 
   rb_scan_args(argc, argv, "21", (VALUE *)&vx, (VALUE *)&vy, (VALUE *)&vz);
-  Data_Get_Struct(self, Proj, proj);
+
+  TypedData_Get_Struct(self, Proj, &proj_data_type, proj);
 
   if ( ! proj->is_src_latlong ) {
     rb_raise(rb_eRuntimeError, "requires latlong src crs. use #transform_inverse instead of #inverse.");
@@ -611,7 +663,7 @@ rb_proj_transform_i (int argc, VALUE *argv, VALUE self, PJ_DIRECTION direction)
 
   rb_scan_args(argc, argv, "21", (VALUE*)&vx, (VALUE*)&vy, (VALUE*)&vz);
 
-  Data_Get_Struct(self, Proj, trans);
+  TypedData_Get_Struct(self, Proj, &proj_data_type, trans);
 
   c_in.xyz.x = NUM2DBL(vx);
   c_in.xyz.y = NUM2DBL(vy);
@@ -712,7 +764,7 @@ rb_crs_initialize (VALUE self, VALUE vdef1)
   PJ *ref;
   int errno;
 
-  Data_Get_Struct(self, Proj, proj);
+  TypedData_Get_Struct(self, Proj, &proj_data_type, proj);
 
   ref = proj_create(PJ_DEFAULT_CTX, StringValuePtr(vdef1));
 
@@ -738,7 +790,7 @@ rb_crs_new (PJ *ref)
   Proj *proj;
   
   vcrs = rb_proj_s_allocate(rb_cCrs);
-  Data_Get_Struct(vcrs, Proj, proj);
+  TypedData_Get_Struct(vcrs, Proj, &proj_data_type, proj);
   
   proj->ref = ref;
   
@@ -751,10 +803,10 @@ rb_proj_initialize_copy (VALUE self, VALUE obj)
 {
   Proj *proj, *other;
 
-  Data_Get_Struct(self, Proj, proj);
+  TypedData_Get_Struct(self, Proj, &proj_data_type, proj);
 
   if ( rb_obj_is_kind_of(obj, rb_cProj) || rb_obj_is_kind_of(obj, rb_cCrs) ) {
-    Data_Get_Struct(obj, Proj, other);
+    TypedData_Get_Struct(obj, Proj, &proj_data_type, other);
     proj->ref = proj_clone(PJ_DEFAULT_CTX, other->ref);    
   }
   else {
@@ -774,7 +826,7 @@ rb_proj_get_name (VALUE self)
 {
   Proj *proj;
 
-  Data_Get_Struct(self, Proj, proj);
+  TypedData_Get_Struct(self, Proj, &proj_data_type, proj);
 
   return rb_str_new2(proj_get_name(proj->ref));  
 }
@@ -797,7 +849,7 @@ rb_proj_get_id_auth_name (int argc, VALUE *argv, VALUE self)
 
   rb_scan_args(argc, argv, "01", (VALUE *)&vidx);
 
-  Data_Get_Struct(self, Proj, proj);
+  TypedData_Get_Struct(self, Proj, &proj_data_type, proj);
 
   if ( NIL_P(vidx) ) {
     string = proj_get_id_auth_name(proj->ref, 0);
@@ -827,7 +879,7 @@ rb_proj_get_id_code (int argc, VALUE *argv, VALUE self)
 
   rb_scan_args(argc, argv, "01", (VALUE *)&vidx);
 
-  Data_Get_Struct(self, Proj, proj);
+  TypedData_Get_Struct(self, Proj, &proj_data_type, proj);
 
   if ( NIL_P(vidx) ) {
     string = proj_get_id_code(proj->ref, 0);    
@@ -852,8 +904,8 @@ rb_proj_as_proj_string (VALUE self)
 {
   Proj *proj;
   const char *string;
+  TypedData_Get_Struct(self, Proj, &proj_data_type, proj);
 
-  Data_Get_Struct(self, Proj, proj);
   string = proj_as_proj_string(PJ_DEFAULT_CTX, proj->ref, PJ_PROJ_5, NULL);
   if ( ! string ) {
     return Qnil;
@@ -876,26 +928,25 @@ static VALUE
 rb_proj_as_projjson (int argc, VALUE *argv, VALUE self)
 {
   Proj *proj;
-	volatile VALUE vopts;
   const char *options[4] = {NULL, NULL, NULL, NULL};
   const char *json = NULL;
-	int i;
+  int i;
 
-  Data_Get_Struct(self, Proj, proj);
+  TypedData_Get_Struct(self, Proj, &proj_data_type, proj);
 
-	if ( argc == 0 ) {
+  if ( argc == 0 ) {
     json = proj_as_projjson(PJ_DEFAULT_CTX, proj->ref, NULL);		
-	}
-	if ( argc > 3 ) {
-		rb_raise(rb_eRuntimeError, "too much options");
-	}
-	else {
-		for (i=0; i<argc; i++) {
-	    Check_Type(argv[i], T_STRING);			
-			options[i] = StringValuePtr(argv[i]);
-		}
+  }
+  if ( argc > 3 ) {
+    rb_raise(rb_eRuntimeError, "too much options");
+  }
+  else {
+    for (i=0; i<argc; i++) {
+       Check_Type(argv[i], T_STRING);			
+       options[i] = StringValuePtr(argv[i]);
+    }
     json = proj_as_projjson(PJ_DEFAULT_CTX, proj->ref, options);				
-	}
+  }
 
   if ( ! json ) {
     return Qnil;
@@ -920,7 +971,8 @@ rb_proj_ellipsoid_get_parameters (VALUE self)
   double a, b, invf;
   int computed;
 
-  Data_Get_Struct(self, Proj, proj);
+  TypedData_Get_Struct(self, Proj, &proj_data_type, proj);
+
   ellps = proj_get_ellipsoid(PJ_DEFAULT_CTX, proj->ref);
   proj_ellipsoid_get_parameters(PJ_DEFAULT_CTX, ellps, &a, &b, &computed, &invf);
   return rb_ary_new3(4,
@@ -944,7 +996,7 @@ rb_proj_as_wkt (int argc, VALUE *argv, VALUE self)
 
   rb_scan_args(argc, argv, "01", (VALUE *)&vidx);
 
-  Data_Get_Struct(self, Proj, proj);
+  TypedData_Get_Struct(self, Proj, &proj_data_type, proj);
 
   if ( NIL_P(vidx) ) {
     wkt = proj_as_wkt(PJ_DEFAULT_CTX, proj->ref, PJ_WKT2_2018, NULL);    
@@ -1010,11 +1062,9 @@ Init_simple_proj_ext ()
 
   rb_define_const(rb_cProj, "WKT2_2015", INT2NUM(PJ_WKT2_2015));
   rb_define_const(rb_cProj, "WKT2_2015_SIMPLIFIED", INT2NUM(PJ_WKT2_2015_SIMPLIFIED));
-#ifdef WKT2_2018
+#if PROJ_AT_LEAST_VERSION(6,3,0)
   rb_define_const(rb_cProj, "WKT2_2018", INT2NUM(PJ_WKT2_2018));
   rb_define_const(rb_cProj, "WKT2_2018_SIMPLIFIED", INT2NUM(PJ_WKT2_2018_SIMPLIFIED));
-#endif
-#ifdef WKT2_2019
   rb_define_const(rb_cProj, "WKT2_2019", INT2NUM(PJ_WKT2_2019));
   rb_define_const(rb_cProj, "WKT2_2019_SIMPLIFIED", INT2NUM(PJ_WKT2_2019_SIMPLIFIED));
 #endif

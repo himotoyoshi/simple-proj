@@ -1,6 +1,6 @@
 
 Gem::Specification::new do |s|
-  version = "1.0.1"
+  version = "1.2.0"
 
   files = Dir.glob("**/*") - [ 
                                Dir.glob("simple-proj-*.gem"), 
